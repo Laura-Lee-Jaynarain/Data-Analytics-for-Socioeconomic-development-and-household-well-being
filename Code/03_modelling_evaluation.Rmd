@@ -1,0 +1,793 @@
+---
+title: "Milestone 3"
+author: "Group"
+date: "2026-10-05"
+output: word_document
+ 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))   
+```
+
+## Milestone 3
+
+### Modeling Strategy
+
+#### Analytical question
+which basic service electricity,
+water or sanitation is most strongly associated with household poverty
+in South Africa?
+
+#### Modeling task identification
+
+##### Modelling Task
+
+This task is treated as a **binary classification problem**.
+
+The target variable, `Target`, has two classes:
+
+* `Low`
+* `NotLow`
+
+`Target` was created in **Milestone 2, Section 4.1** by identifying households in the **bottom income quartile**.
+
+The three basic-service variables are kept as predictors:
+
+* `WaterSafe_label`
+* `ElectricityAccess_label`
+* `MainToiletCode_clean`
+
+These variables allow us to determine **which basic service is most strongly associated with households in the `Low` income class**.
+
+#### Why Classification?
+
+Classification is appropriate because the business question is:
+
+> **Which basic service is most strongly associated with low-income households?**
+
+This is a **predictor-ranking question**. We want to compare the importance of different services in predicting whether a household belongs to the `Low` or `NotLow` class.
+
+Therefore:
+
+* **Logistic regression** can use its coefficients to show the strength and direction of each service's association with the `Low` class.
+* **Tree-based models** can use variable importance to show which service contributes most to classification.
+
+Regression on raw income would answer a different question: **how well can we predict the exact income value?**
+
+Clustering would also be unsuitable because it looks for groups **without using a predefined target**.
+
+Therefore, **binary classification is the most suitable approach for answering the business question**.
+
+#### Assumptions, parameter choices and evidence for techniques chosen.
+##### Problem
+
+The analytical dataset contains some variables that provide the same information in different forms. For example, some variables have both a **raw numeric code** and a **labelled version**, while `ServiceAccessScore` contains information that is already represented by the individual water, electricity and sanitation variables.
+
+Using both versions can give the model duplicate information and make the results harder to interpret.
+
+This is especially important for the business question because the aim is to determine **which basic service is most strongly associated with low-income households**. If only `ServiceAccessScore` is used, the model cannot determine whether water, electricity or sanitation is the strongest factor.
+
+##### Treatment
+
+The modelling feature set therefore removes redundant variables and keeps the version that is most useful for interpretation.
+
+The three individual service variables are retained:
+
+* `WaterSafe_label`
+* `ElectricityAccess_label`
+* `MainToiletCode_clean`
+
+`ServiceAccessScore` is excluded because it combines these three variables into a single score.
+
+Where a raw code and labelled version contain the same information, the **labelled version** is retained because it is easier to interpret and communicate.
+
+##### Assumptions
+
+The modelling approach makes the following assumptions:
+
+* Each household represents one observation.
+* The `Target` variable correctly identifies households as `Low` or `NotLow`.
+* The selected predictors contain useful information for distinguishing between the two classes.
+* Removing duplicate representations of the same information will reduce redundancy without removing important information.
+* The three individual service indicators can be compared to determine which service has the strongest association with the `Low` class.
+
+##### Parameter and Feature Choices
+
+The main feature-selection decisions are:
+
+| Decision                  | Choice                        | Reason                                                                                |
+| ------------------------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| Target                    | `Target`                      | Provides the two classes required for binary classification                           |
+| Water predictor           | `WaterSafe_label`             | Directly represents household water access                                            |
+| Electricity predictor     | `ElectricityAccess_label`     | Directly represents household electricity access                                      |
+| Sanitation predictor      | `MainToiletCode_clean`        | Represents the household's main toilet/sanitation type                                |
+| Composite score           | `ServiceAccessScore` excluded | Combines the three individual services and would hide which service is most important |
+| Duplicate coded variables | Excluded                      | Avoids using the same information twice                                               |
+| Labelled variables        | Retained                      | Easier to interpret than the original numeric codes                                   |
+
+##### Why This Feature Set Suits the Business Objective
+
+The selected features allow the models to answer the actual business question:
+
+> **Which basic service is most strongly associated with low-income households?**
+
+Keeping the three individual service indicators means that:
+
+* **Logistic regression** can compare the coefficients of the service variables.
+* **Tree-based models** can compare their variable importance.
+* The results remain interpretable because each predictor represents a specific service.
+
+Therefore, the final feature set prioritises **interpretability, reduced redundancy and direct alignment with the business objective**, rather than simply including every available variable.
+
+## Models
+This Model will present the analytical dataset and preprocessing pipeline preserved in the Milestone 2 Validation design to ensure that any learned preprocessing is fitted without information leakage from validation/test data.
+
+```{r libraries}
+#install.packages("tidyverse")
+#install.packages("janitor")
+#install.packages("knitr")
+#install.packages("scales")
+#install.packages("caret")
+#install.packages("glmnet")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+#install.packages("randomForest")
+#install.packages("pROC")
+
+library(tidyverse)
+library(janitor)
+library(knitr)
+library(scales)
+library(caret)      
+library(glmnet)       
+library(rpart)         
+library(rpart.plot)    
+library(randomForest)
+library(pROC)           
+```
+```{r import}
+train_data <- read.csv("train_data.csv", stringsAsFactors = FALSE)
+test_data  <- read.csv("test_data.csv",  stringsAsFactors = FALSE)
+
+train_data$Target <- factor(train_data$Target, levels = c("NotLow","Low"))
+test_data$Target <- factor(test_data$Target, levels = c("NotLow","Low"))
+
+nrow(train_data); nrow(test_data)
+prop.table(table(train_data$Target))   # confirm the Milestone 2 class balance survived the file round-trip
+prop.table(table(test_data$Target))
+```
+#### Feature set
+
+
+```{r feature-set-table}
+redundancy_log <- tribble(
+  ~Dropped,                                                  ~Kept_instead,                 ~Reason,
+  "WaterSafeCode",                                            "WaterSafe_label",              "Same information; label is model-ready and avoids duplicate signal",
+  "ElectricityAccessCode",                                    "ElectricityAccess_label",       "Same information; label is model-ready and avoids duplicate signal",
+  "LoadsheddingFrequencyCode",                                "Loadshedding_ord",              "Same information; ordered factor preserves ranking without duplicate signal",
+  "AdultHungerCode",                                          "AdultHunger_ord",               "Same information; ordered factor preserves ranking without duplicate signal",
+  "HouseholdSizeBand",                                        "HouseholdSize_clean",           "Band is a coarser copy of the continuous variable; continuous retains more information for the models",
+  "ServiceAccessScore",                                       "WaterSafe_label + ElectricityAccess_label + MainToiletCode_clean", "The composite hides WHICH service matters -- the business question needs the three kept separate",
+  "FridgeAssetCode...SolarPanelAssetCode (7 raw asset flags)", "AssetIndex",                    "Individually these 7 binary flags are highly correlated with each other; the composite is a standard, more stable wealth proxy and avoids 7-way multicollinearity",
+  "WallConditionCode, RoofCondition_clean, FloorCondition_clean", "DwellingConditionsScore",    "Same reasoning as AssetIndex: composite avoids redundancy among 3 correlated condition flags"
+)
+kable(redundancy_log, caption = "Feature-set reduction: redundant columns dropped before modelling")
+```
+
+```{r define-feature-set}
+predictor_cols <- c(
+  "Province_clean", "GeoTypeCode",
+  "WaterSafe_label", "MainToiletCode_clean", "ElectricityAccess_label", "Loadshedding_ord",
+  "HouseholdSize_clean", "AdultHunger_ord", "MainIncomeSourceCode", "TotalVehicles_clean",
+  "AssetIndex", "WallMaterialCode", "RoofMaterial_clean", "TenureCode_clean",
+  "RDPHousing_clean", "HousingSubsidy_clean", "DwellingConditionsScore"
+)
+
+train_model <- train_data[, c(predictor_cols, "Target")]
+test_model  <- test_data[,  c(predictor_cols, "Target")]
+
+ncol(train_model); ncol(test_model)   # 18 columns (17 predictors + Target) in both
+```
+
+```{r verify-feature-set}
+setdiff(predictor_cols, names(train_data))   # should be character(0) -- confirms every kept column exists
+str(train_model)
+```
+
+#### Handle missing predictor values without leakage
+
+
+```{r impute}
+numeric_predictors <- c("HouseholdSize_clean", "TotalVehicles_clean", "AssetIndex", "DwellingConditionsScore")
+factor_predictors  <- setdiff(predictor_cols, numeric_predictors)
+
+# fit: compute medians from TRAIN ONLY
+train_medians <- sapply(train_model[numeric_predictors], median, na.rm = TRUE)
+train_medians   # record the values actually used, for traceability
+
+# apply: same values to both train and test
+for (col in numeric_predictors) {
+  train_model[[col]][is.na(train_model[[col]])] <- train_medians[[col]]
+  test_model[[col]][is.na(test_model[[col]])]   <- train_medians[[col]]
+}
+
+# categorical: explicit "Missing" level, then align levels across train/test
+for (col in factor_predictors) {
+  train_model[[col]] <- as.character(train_model[[col]])
+  test_model[[col]]  <- as.character(test_model[[col]])
+  train_model[[col]][is.na(train_model[[col]]) | train_model[[col]] == ""] <- "Missing"
+  test_model[[col]][is.na(test_model[[col]])   | test_model[[col]]  == ""] <- "Missing"
+
+  lv <- sort(union(unique(train_model[[col]]), unique(test_model[[col]])))
+  train_model[[col]] <- factor(train_model[[col]], levels = lv)
+  test_model[[col]]  <- factor(test_model[[col]],  levels = lv)
+}
+```
+**Effect / Verification.**
+
+```{r verify-impute}
+sum(is.na(train_model))   # should be 0
+sum(is.na(test_model))    # should be 0
+ncol(model.matrix(~ . - Target, data = train_model)) ==
+  ncol(model.matrix(~ . - Target, data = test_model))   # TRUE confirms identical encoded structure
+```
+
+#### candidate modelling approaches
+```{r shared-cv-folds}
+set.seed(381)   # same seed used for the Milestone 2 train/test split, for a fully reproducible pipeline
+
+cv_folds <- createFolds(train_model$Target, k = 5, returnTrain = TRUE)
+
+ctrl <- trainControl(
+  method = "cv",
+  index = cv_folds,              # the SAME folds are passed to every model below
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,   # gives ROC, Sens, Spec during tuning
+  savePredictions = "final"
+)
+```
+#### logistic regression
+```{r fit-glmnet}
+glmnet_grid <- expand.grid(
+  alpha  = c(0, 0.25, 0.5, 0.75, 1),
+  lambda = 10^seq(-4, -1, length.out = 10)
+)
+
+set.seed(381)
+model_glmnet <- train(
+  Target ~ ., data = train_model,
+  method = "glmnet",
+  family = "binomial",
+  trControl = ctrl,
+  tuneGrid = glmnet_grid,
+  metric = "ROC"
+)
+
+model_glmnet$bestTune
+```
+#### Decision tree (CART)
+```{r fit-tree}
+tree_grid <- expand.grid(cp = seq(0.0005, 0.05, length.out = 15))
+
+set.seed(381)
+model_tree <- train(
+  Target ~ ., data = train_model,
+  method = "rpart",
+  trControl = ctrl,
+  tuneGrid = tree_grid,
+  metric = "ROC"
+)
+
+model_tree$bestTune
+rpart.plot(model_tree$finalModel, main = "Final decision tree (best cp)")
+```
+
+#### random forest
+```{r fit-rf}
+p <- length(predictor_cols)
+rf_grid <- expand.grid(mtry = unique(round(c(sqrt(p), p/3, p/2))))
+
+
+if (file.exists("model_rf.rds")) {
+  model_rf <- readRDS("model_rf.rds")
+} else {
+  set.seed(381)
+  model_rf <- train(
+  Target ~ ., data = train_model,
+  method = "rf",
+  trControl = ctrl,
+  tuneGrid = rf_grid,
+  metric = "ROC",
+  ntree = 500
+)
+  saveRDS(model_rf, "model_rf.rds")
+}
+
+
+model_rf$bestTune
+```
+
+### Documentation of Modeling Strategy
+Document the modelling techniques, model parameters, assumptions, and procedures for 
+training, testing, and evaluating the models. 
+
+```{r training-summary}
+training_summary <- tribble(
+  ~Model, ~Package_function, ~Resampling, ~Tuned_over, ~Selection_metric,
+  "Logistic regression (elastic net)", "glmnet::glmnet via caret::train", "5-fold CV, stratified on Target, shared folds", "alpha in {0, .25, .5, .75, 1}; lambda over 10 log-spaced values", "ROC (AUC)",
+  "Decision tree",                     "rpart::rpart via caret::train",   "5-fold CV, stratified on Target, shared folds", "cp over 15 values",                                                "ROC (AUC)",
+  "Random forest",                     "randomForest::randomForest via caret::train", "5-fold CV, stratified on Target, shared folds", "mtry over 3 candidate values; ntree fixed at 500",            "ROC (AUC)"
+)
+kable(training_summary, caption = "Task 1 training/tuning procedure, by model")
+```
+
+```{r save-models}
+saveRDS(model_glmnet, "model_glmnet.rds")
+saveRDS(model_tree,   "model_tree.rds")
+```
+### Technical evaluation
+
+#### Use metrics appropriate to the modelling task
+
+The `Target` variable is **imbalanced**, with approximately:
+
+* **25%** of households classified as `Low`
+* **75%** classified as `NotLow`
+
+This happens because `Low` was defined using the bottom income quartile.
+
+Because the classes are imbalanced, **accuracy alone can be misleading**. For example, a model could predict `NotLow` for every household and still achieve about **75% accuracy**, while failing to identify any `Low` households.
+
+This would not be useful for the business objective, which is to identify households associated with the `Low` income class.
+
+
+To get a more complete view of model performance, several metrics are reported instead of relying on a single measure:
+
+| Metric                   | What it tells us                                                                  | Why it is useful                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Confusion Matrix**     | Shows correct and incorrect predictions for both classes                          | Provides a clear overview of model errors                                                    |
+| **Sensitivity / Recall** | Measures how many actual `Low` households are correctly identified                | Important because identifying `Low` households is a key business goal                        |
+| **Specificity**          | Measures how many `NotLow` households are correctly identified                    | Shows how well the model avoids incorrectly classifying `NotLow` households                  |
+| **Precision**            | Measures how many households predicted as `Low` are actually `Low`                | Shows how reliable the model's `Low` predictions are                                         |
+| **F1-score**             | Combines precision and recall into one measure                                    | Useful when both identifying `Low` households and avoiding false positives matter            |
+| **Balanced Accuracy**    | Gives equal importance to both classes                                            | More suitable than ordinary accuracy for imbalanced data                                     |
+| **ROC-AUC**              | Measures how well the model separates the two classes across different thresholds | Allows model discrimination to be assessed without relying only on the default 0.5 threshold |
+
+#### Why This Approach is Appropriate
+
+Using multiple metrics gives a more balanced assessment of model performance.
+
+In particular, **sensitivity/recall is important because the business objective focuses on identifying `Low` households**. However, precision and specificity are also considered to ensure that the model is not simply classifying too many households as `Low`.
+
+Therefore, the models are evaluated using a **combination of metrics rather than accuracy alone**. This provides a clearer picture of how well each model performs on both the `Low` and `NotLow` classes.
+
+##### test-set predictors
+
+```{r predict-test}
+pred_glmnet_class <- predict(model_glmnet, newdata = test_model)
+pred_glmnet_prob  <- predict(model_glmnet, newdata = test_model, type = "prob")[, "Low"]
+
+pred_tree_class <- predict(model_tree, newdata = test_model)
+pred_tree_prob  <- predict(model_tree, newdata = test_model, type = "prob")[, "Low"]
+
+pred_rf_class <- predict(model_rf, newdata = test_model)
+pred_rf_prob  <- predict(model_rf, newdata = test_model, type = "prob")[, "Low"]
+```
+#### Confustion matrices
+For classification, consider class distribution, confusion matrix and suitable metrics such 
+as precision, recall, F1, specificity, ROC-AUC or balanced accuracy where appropriate.
+
+
+```{r confusion-matrices}
+cm_glmnet <- confusionMatrix(pred_glmnet_class, test_model$Target, positive = "Low")
+cm_tree   <- confusionMatrix(pred_tree_class,   test_model$Target, positive = "Low")
+cm_rf     <- confusionMatrix(pred_rf_class,     test_model$Target, positive = "Low")
+
+cm_glmnet
+cm_tree
+cm_rf
+```
+##### ROC-AUC
+
+```{r roc-auc}
+roc_glmnet <- roc(response = test_model$Target, predictor = pred_glmnet_prob, levels = c("NotLow", "Low"))
+roc_tree   <- roc(response = test_model$Target, predictor = pred_tree_prob,   levels = c("NotLow", "Low"))
+roc_rf     <- roc(response = test_model$Target, predictor = pred_rf_prob,     levels = c("NotLow", "Low"))
+
+auc(roc_glmnet); auc(roc_tree); auc(roc_rf)
+
+plot(roc_glmnet, col = "#2c7fb8", main = "ROC curves -- test set")
+plot(roc_tree,   col = "#e6550d", add = TRUE)
+plot(roc_rf,     col = "#31a354", add = TRUE)
+legend("bottomright", legend = c("Logistic (elastic net)", "Decision tree", "Random forest"),
+       col = c("#2c7fb8", "#e6550d", "#31a354"), lwd = 2)
+```
+#### technical outputs
+
+```{r variable-importance}
+# Logistic regression: odds ratios (exp of coefficients) at the best-tuned lambda/alpha
+coef_glmnet <- coef(model_glmnet$finalModel, s = model_glmnet$bestTune$lambda)
+odds_ratios <- exp(as.matrix(coef_glmnet))
+head(odds_ratios[order(-abs(odds_ratios[, 1])), , drop = FALSE], 15)
+
+# Random forest variable importance
+varImp(model_rf)
+
+# Decision tree: which variable it split on first (most discriminating single split)
+model_tree$finalModel
+```
+
+#### Model comparison and final classification model selection
+
+
+| Model | Accuracy | Sensitivity (Low) | Specificity | Balanced Accuracy | ROC-AUC |
+|----------------------|-------------|----------------|-----------|------------|-----------------|
+|Logistic (elastic net) | 0.834 | 0.556 | 0.930 | 0.743 | 0.879 |
+| Decision tree | 0.833 | 0.541 | 0.935 | 0.734 | 0.839 |
+| Random forest | 0.839 | 0.481 | 0.963 | 0.722 | 0.866 |
+
+**Selected model: logistic regression (elastic net).** Random forest has the highest raw accuracy and specificity, but the worst sensitivity (48.1%), it misses more than half of `Low` households. Since the business objective is identifying the under-served households for prioritization, missing them is their costlier error, not a false alarm. Elastic net gives the best sensitivity, AUC and balance accuracy, so it is the defensible choice even though its raw accuracy is marginally lower than that of the random forest.
+
+## Regression 
+
+Regression is included as a second modelling approach because the business question can also be framed as predicting income directly, rather than only classifying households inlt Low/NootLow. `income_clean` and `LogIncome` are not present in the `train_data.csv`/`test_data.csv`. The split was built for classificationa nd correctly dropped income to avoid leakage. Regression will therefore use its own 80/20 split, built fresh from `analytical_dataset.csv`, with the same `set.seed(381)` for consistency with the rest of the pipeline.
+
+
+```{r}
+analytical_dataset <- read.csv("analytical_dataset.csv", colClasses = c(HouseholdID = "character"))
+nrow(analytical_dataset)
+```
+
+```{r}
+reg_data <- analytical_dataset %>% 
+  filter(!is.na(LogIncome))
+nrow(reg_data)
+
+
+set.seed(381)
+reg_split <- createDataPartition(reg_data$LogIncome, p = 0.8, list = FALSE)
+reg_train <- reg_data[reg_split, ]
+reg_test <- reg_data[-reg_split, ]
+
+reg_predictor_cols <- predictor_cols  # this is the same 17 predictors as classification
+
+nrow(reg_train)
+nrow(reg_test)
+
+```
+#### The same train-only imputation approach used for classification was reapplied here, since regression split draws from `analytical_dataset.csv` rahter than the already-imputed classification files.
+
+```{r}
+#Handle missing predictor values without leakage for regression
+
+numeric_predictors_reg <- c("HouseholdSize_clean", "TotalVehicles_clean", "AssetIndex", "DwellingConditionsScore")
+factor_predictors_reg <- setdiff(reg_predictor_cols, numeric_predictors_reg)
+
+#fit: compute medians from TRAIN data inly
+reg_train_medians <- sapply(reg_train[numeric_predictors_reg], median, na.rm = TRUE)
+reg_train_medians
+
+
+#applt the same values to both train and test data
+for (col in numeric_predictors_reg) {
+  reg_train[[col]][is.na(reg_train[[col]])] <- reg_train_medians[[col]]
+  reg_test[[col]][is.na(reg_test[[col]])] <- reg_train_medians[[col]]
+}
+
+#categorical : explicit "missing" levle, then align levels across train/test
+for (col in factor_predictors_reg) {
+  reg_train[[col]] <- as.character(reg_train[[col]])
+  reg_test[[col]] <- as.character(reg_test[[col]])
+  reg_train[[col]][is.na(reg_train[[col]]) | reg_train[[col]]  == ""] <- "Missing"
+  reg_test[[col]][is.na(reg_test[[col]])   | reg_test[[col]]  == ""] <- "Missing"
+  
+  lv <- sort(union(unique(reg_train[[col]]), unique(reg_test[[col]])))
+  reg_train[[col]] <- factor(reg_train[[col]], levels = lv)
+  reg_test[[col]] <- factor(reg_test[[col]], levels = lv)
+}
+
+
+```
+
+```{r}
+#verification: should both return 0
+sum(is.na(reg_train[, reg_predictor_cols]))   
+sum(is.na(reg_test[, reg_predictor_cols])) 
+```
+
+```{r}
+set.seed(381)
+model_glmnet_reg <- train(
+  LogIncome ~ ., data = reg_train[, c(reg_predictor_cols, "LogIncome")],
+  method = "glmnet",
+  family = "gaussian",
+  trControl = trainControl(method = "cv", number = 5),
+  tuneGrid = glmnet_grid,
+  metric = "RMSE"
+)
+
+
+model_glmnet_reg$bestTune
+
+```
+
+```{r}
+
+if (file.exists("model_rf_reg.rds")) {
+  model_rf_reg <- readRDS("model_rf_reg.rds")
+} else {
+  set.seed(381)
+model_rf_reg <- train(
+  LogIncome ~ ., data = reg_train[, c(reg_predictor_cols, "LogIncome")],
+  method = "rf",
+  trControl = trainControl(method = "cv", number = 5),
+  tuneGrid = rf_grid,
+  metric = "RMSE",
+  ntree = 500
+)
+saveRDS(model_rf_reg, "model_rf_reg.rds")
+}
+
+model_rf_reg$bestTune
+
+
+```
+
+
+```{r}
+saveRDS(model_glmnet_reg, "model_glmnet_reg.rds")
+```
+
+#### Regression evaluation
+
+Relying on a single metric would be misleading here: R² alone does not show whether errors are practically small in rand terms, and RMSE on the log scale isn't directly interpretable as a rand amount. RMSE, MAE and R² are therefore reported together, with RMSE/MAE also back-transformed to the original rand scale for interpretability.
+
+```{r}
+pred_glmnet_reg <- predict(
+  model_glmnet_reg, 
+  newdata = reg_test
+)
+
+pred_rf_reg <- predict(
+  model_rf_reg,
+  newdata = reg_test
+)
+
+postResample(pred_glmnet_reg, reg_test$LogIncome)
+postResample(pred_rf_reg, reg_test$LogIncome)
+
+#back-transform to rand scale for interpretability
+rand_rmse <- function(pred, actual) sqrt(mean((expm1(pred) - expm1(actual))^2))
+rand_mae <- function(pred, actual) mean(abs(expm1(pred) - expm1(actual)))
+
+
+cat("Elastic net -- RMSE(rand):", rand_rmse(pred_glmnet_reg, reg_test$LogIncome),
+    " MAE(rand):", rand_mae(pred_glmnet_reg, reg_test$LogIncome), "\n")
+cat("Random forest -- RMSE(rand):", rand_rmse(pred_rf_reg, reg_test$LogIncome),
+    " MAE(rand):", rand_mae(pred_rf_reg, reg_test$LogIncome), "\n")
+
+```
+
+| Model      | RMSE (log scale) | R² | RMSE (rand) | MAE (rand) |
+|----------------| -----|----|----|----|
+| Elastic net | 0.787 | 0.717 | R30,473 | R7,042 |
+|Random forest | 0.814 | 0.715 | R30,145 | R6,900 |
+
+**Selected model: elastic net regression** Performance between the two models is statistically indistinguishable, R² is identical to two decimal places, while the models each have different error scales. Elastic net is selected for its interpretable coefficients, rather than defaulting to a more complex model
+
+
+```{r}
+coef_glmnet_reg <- coef(model_glmnet_reg$finalModel, s = model_glmnet_reg$bestTune$lambda)
+head(as.matrix(coef_glmnet_reg)[order(-abs(as.matrix(coef_glmnet_reg)[,1])),, drop = FALSE], 15)
+```
+
+**Key finding:** In the selected elastic net regression, the three service-access
+variables again rank far below `MainIncomeSourceCode`. Only `MainToiletCode_clean10` appears among the 15 largest coefficients (-0.278), while neither `WaterSafe_label` nor `ElectricityAccess_label` reach the top 15 at all, both have a weaker association with income than even this single toilet-type category. `MainIncomeSourceCode8` alone has a coefficient roughly 30 times larger in magnitude than the strongest service-related term. This is consistent with both the classification models and the earlier random forest regression run, and directly informs the business interpretation in Task 3: income source overwhelms all three basic-service variables combined.
+
+
+## Clustering
+
+Clustering uses `ServiceAccessScore`, `AssetIndex`, `DwellingConditionsScore`, and `HouseholdSize_clean`. It deliberately excluded income, so clusters represent a service/wellbeing profile discovered without supervision, which can then be checked against income rather than being defined by it.
+
+```{r}
+#install.packages("cluster")
+library(cluster)
+```
+
+
+```{r}
+clus_data <- analytical_dataset %>%
+  filter(
+ !is.na(ServiceAccessScore), !is.na(AssetIndex),
+ !is.na(DwellingConditionsScore), !is.na(HouseholdSize_clean)
+  )
+
+clus_scaled <- scale(
+ clus_data[, c("ServiceAccessScore", "AssetIndex", "DwellingConditionsScore", "HouseholdSize_clean")]
+)
+nrow(clus_data)
+
+```
+
+
+
+```{r}
+set.seed(381)
+
+idx <- sample(nrow(clus_scaled), 5000)
+
+
+for (k in 2:6) {
+  km <- kmeans(clus_scaled, centers = k, nstart = 10)
+  sil <- silhouette(km$cluster[idx], dist(clus_scaled[idx, ]))
+
+
+cat("k =", k, " inertia =", round(km$tot.withinss),
+    " avg silhouette ~", round(mean(sil[,3]), 3), "\n")
+}
+
+
+```
+
+#### Cluster selection profile
+
+|K | Silhouette | Notes               |
+|---|----|-----------------------------|
+| 2 | 0.449  (best)| Statistically best-separated, but may be coarse for segmentation |
+| 3 | 0.447 | Simple but less actionable |
+| 4 | 0.363 | Lower silhouette |
+| 5-6 | 0.42 - 0.44 | No clear improvement | 
+
+
+**Chosen k =4 , despite k =2 and k =3 both scoring higher on silhouette.** 
+Neither k=2 nor k=3 produces clustrs that meaningfully differ in poverty rate. k =2 splits households into groups at 25.06% and 28.27% low-income, with only a 3.2% gap, while k=3 does a barely better job for its two largets clusters. k=4 instead spreads meaningfully from 8.7% to 49.2% low-income rate across 4 comparably sized clusters, giving far more useful differentiation for the business objective of identifying distinct household profiles.
+
+
+
+```{r}
+set.seed(381)
+
+km_final <- kmeans(clus_scaled, centers =4, nstart = 10)
+clus_data$cluster <- km_final$cluster
+
+clus_data %>%
+  group_by(cluster) %>%
+  summarise(
+    n = n(),
+    mean_service = mean(ServiceAccessScore),
+    mean_assets = mean(AssetIndex),
+    mean_dwelling = mean(DwellingConditionsScore),
+    mean_income = mean(income_clean, na.rm = TRUE),
+    pct_low_income = mean(LowIncomeFlag, na.rm = TRUE) * 100
+  )
+
+```
+
+## Final model comparison across  tasks
+
+| Modelling task     | Candidate(s) | Final choice | Evidence |
+|----------------|------------------|-------------|----------------|
+|Classification | Logistic (elastic net), tree, RF | Logistic (elastic net) | Best sensitivity + AUC for identifying Low households |
+|Regression | Elastic net, RF | Elastic net | R²  statistically tied (0.717 vs 0.715); interpretable coefficients preferred 
+|Clustering | k=2 though 6 | k=4 | Best business meaningful separation, despite k=2 and k=3 having higher silhouette numbers|
+
+
+
+## Business and Ethical Evaluation
+
+#### Assessment against business objectives
+
+The original question asked, which basic services shows the strongest association with household poverty, has a qualified, evidence-based answer. Across the classification models and the regression models, sanitation (toilet type) shows a weak but detectable association with income, while water safety and electricity access show essentially no signal among the strongest predictors in either model. All three service variables are consistently outranked by `MainIncomeSourceCode`, `AssetIndex`, and `HouseholdSize_clean`. The data does not support astrong claim that one service dominates poverty outcomes. Income source and asset ownership are far stronger signals than any of the three services individually.
+
+#### Interpretation : association, not causation
+
+The tree splits and odd ratios describe statistical association within this cross-sectional sample. A variable like `MainIncimeSourceCode8` having a large odds ration does not mean income source *causes* poverty status. Income source is closely related to, by definition, income level; making it closer to an association than a causal driver. Concluding, for example, that "improving sanitation access reduces poverty" is not supported by our analysis but the reverse direction, or a confound like geography or employment, is equally plausible.
+
+#### Limitations, bias and group performance
+
+
+```{r}
+## Fairness check: recall by province, on the SELECTED model
+
+test_model$pred_glmnet <- predict(model_glmnet, newdata = test_model)
+
+fairness_by_province <- test_model %>%
+  group_by(Province_clean) %>%
+  summarise(
+    n = n(),
+    actual_low = sum(Target == "Low"),
+    recall = sum(pred_glmnet == "Low" & Target == "Low") / sum(Target == "Low")
+  ) %>%
+  filter(actual_low > 5) %>%
+  arrange(desc(recall))
+
+fairness_by_province
+```
+The selected classification model (elastic net) is less reliables at identifying low-income households in Western Cape and Northern Cape than in Eastern Cape and North West. If this model inofrmed real resource allocation, under-served households in Western Cape and Northern Cape would be substantially more likely to be missed than those in Eastern Cape. 
+
+Several predictors, `MainIncomeSourceCode8`, `WallMaterialCode5`, remain un-interpretable without a codebook. The data is also self-reported and cross-sectional, so no temporal ordering can be established.
+
+#### Deployment readiness
+
+Sufficiently useful, but only with explicit caveats, not as an uncondtional decision too. The model's sensitivity means it will miss nearly half of the actual low-income households. The province-level fairness gap should be disclosed to any downstream user, with a recommendation that Western Cape/Northern Cape predictions be treated with extra caution or supplemented with local knowledge.
+
+## Deployment
+
+### Deployment strategy
+
+**Intended users ** -  Project/NGO staff and policy analysts working on the SDHSA initiative who need to prioritise which households or areas to review for service-access interventions, not data scientists.
+
+**Decision supported** -- Whether a household (or a batch of households from a new data collection) should be flagged for further review as likely to be in the Low-income group, so limited field-visit or intervention capacity can be prioritised.
+
+**Inputs ** -- The same 17 predictors used in Task 1 (province, water/electricity/sanitation access, household size, asset index, dwelling conditions, income source, etc.), entered either one household at a time through a form, or as a CSV of many households at once.
+
+**Outputs** -- A predicted class ("Low" / "NotLow") and the model's estimated probability of "Low", together with an on-screen caution when a prediction falls in a province (Western Cape, Northern Cape) where Task 3's fairness check showed lower reliability.
+
+**Operational workflow** -- New or updated household records → uploaded as CSV or entered individually → validated against the required column set → missing/unseen values handled the same way as in training (median imputation for numeric fields, an explicit "Missing" category for categorical fields) → scored by the selected elastic-net model → results reviewed by a human analyst before any resource-allocation decision is made. The model is a screening aid; it does not make the final decision.
+
+### Deployment tool evaluation
+
+| Tool | Fit for this project |
+|------|----------------------|
+| **R/Shiny** | Runs the trained "caret"/"glmnet" model natively with no re-implementation; built-in web form for non-technical users; supports both single-record and batch-CSV workflows in one app. **Selected.** |
+| Plumber (R API) | Good for system-to-system integration, but would need a separate front end for the non-technical users this project targets - more effort for no real benefit here. |
+| flexdashboard | Suited to static/periodic reporting dashboards rather than an interactive "score this household" tool with user input. |
+| Power BI + R script | Possible, but ties deployment to a Power BI licence and is a worse fit for ad-hoc single-household scoring than a purpose-built form. |
+
+R/Shiny was chosen because it lets the exact trained model run as-is, supports the two real usage patterns (one-off lookups and batch files from new data collection), and needs no infrastructure beyond R itself or a free shinyapps.io account for sharing a link.
+
+### How new data is validated and scored
+
+Uploaded CSVs are checked against the 17 required predictor columns before scoring; missing columns stop the process with an explicit message rather than failing silently. For any new or missing value, the app applies exactly the same train-only rule used in Task 1: numeric predictors are filled with the **training-set median** (not recomputed from the new data, to avoid leakage), and categorical predictors are mapped to an explicit "Missing" level. A categorical code that was never seen during training is also mapped to "Missing" rather than crashing the app, so unexpected or newly introduced survey codes degrade gracefully instead of blocking scoring.
+
+### Monitoring strategy
+
+| Measure | Threshold / indicator | Action |
+|---------|-----------------------|--------|
+| Sensitivity (recall for "Low") | Falls below ~0.50 on new labelled data (current test-set value: 0.556) | Flag for retraining |
+
+| ROC-AUC | Falls below 0.80 (current test-set value: 0.879) | Flag for retraining |
+
+| Predictor drift | Noticeable shift in province mix, asset index or dwelling-conditions distribution versus the training data | Investigate before trusting new predictions |
+
+| New data availability | A new SDHSA survey wave is collected | Retrain and re-validate |
+
+| Variable definitions change | Future data collection changes the meaning or coding of key variables | Retire this model version; redevelop the feature set |
+
+A lightweight quarterly review (recomputing the metrics above on any newly labelled data) is recommended as the minimum monitoring cadence, given the project does not have real-time labelled feedback.
+
+### Deployment artefact
+
+The functional app, trained model and a README describing how to run it are kept together in the "ModelingAndDeployment/" folder of the project repository, alongside the modelling notebook, so the deployment code stays reproducible from the same source as the models it serves.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,768 @@
+---
+title: "Milestone2 - Preprocessing"
+output: word_document
+date: "2026-09-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))   
+```
+# Milestone 2
+The data objects from the selected datasets from milestone has already been created in milestone 1 and we will continue to use these objects in the project environment.
+
+For each decision demonstrate the following structure:
+- **Problem**: What data quality issue or inconsistency was identified? 
+- **Treatment**: What method or transformation was applied in R to resolve it? 
+- **Effect**: How did the dataset change after the transformation? 
+- **Verification**: What code, summary output, or visualization confirms the fix worked as 
+intended?
+
+**__target grain__** : one row represents one household
+
+## environment setup
+
+```{r imports}
+#install.packages("tidyverse")
+#install.packages("janitor")
+#install.packages("knitr")
+#install.packages("Scales")
+#install.packages("dplyr")
+
+library(tidyverse)
+library(janitor)
+library(knitr)
+library(scales)
+library(dplyr)
+```
+
+```{r}
+df04_DC <- read.csv("../Data/D04_Dwelling_Conditions.csv", colClasses = c(HouseholdID = "character"))
+df05_BS <- read.csv("../Data/D05_Basic_Services.csv", colClasses = c(HouseholdID = "character"))
+df06_HE <- read.csv("../Data/D06_Household_Energy.csv", colClasses = c(HouseholdID = "character"))
+Df07_HW <- read.csv("../Data/D07_Household_Wellbeing.csv", colClasses = c(HouseholdID = "character"))
+df09_HR <- read.csv("../Data/D09_Household_Resources.csv", colClasses = c(HouseholdID = "character"))
+```
+
+
+## 2.1 Remove invalid IDs
+**problem**:  Records in Basic services dataset have non-numeric IDs. Some `HouseholdID` values contained text `(UNMATCHED...)` instead of the normal 18-digit household ID.
+
+**Treatment**: found invalid IDs and removed those rows because they could not be matched with the other datasets.
+
+**Effect**: The dataset became smaller  and all remaining HouseholdID values were valid.
+
+**Verification**: I used `nrow()` to compare the number of rows before and after cleaning and checked that no invalid IDs were left.
+
+```{r }
+invalid_id_rows<- df05_BS %>% filter(!grepl("^[0-9]+$", HouseholdID))
+nrow(invalid_id_rows)
+invalid_id_rows[,c("HouseholdID","Province")]
+
+df05_BS_clean <- df05_BS %>% filter(grepl("^[0-9]+$",HouseholdID))
+
+#verify
+nrow(df05_BS)
+nrow(df05_BS_clean)
+sum(!grepl("^[0-9]+$", df05_BS_clean$HouseholdID))
+```
+***
+
+##2.2 Duplicated records
+**problem** : each dataset must have a set of unique records and avoid redundant data. Some households appeared more than once, even though each household should only have one record.
+
+**Treatment**: I kept the first copy of each household and removed the duplicate records.
+
+**Effect**: Both datasets had  duplicate rows removed, leaving one record per household.
+
+**Verification**: I compared the row counts before and after cleaning and used `duplicated()` to confirm there were no duplicate IDs left.
+
+```{r duplicates}
+Df07_HW_clean <- Df07_HW %>% distinct(HouseholdID, .keep_all = TRUE)
+df09_HR_clean <- df09_HR %>% distinct(HouseholdID, .keep_all = TRUE)
+
+#verification
+nrow(Df07_HW)
+nrow(Df07_HW_clean)
+nrow(df09_HR)
+nrow(df09_HR_clean)
+sum(duplicated(Df07_HW_clean$HouseholdID))
+sum(duplicated(df09_HR_clean$HouseholdID))
+```
+***
+
+##2.3 completeness and missing values
+**Problem**: Some income values were `9999999` or higher, which are placeholder values.
+
+**Treatment**: created  cleaned income columns and changed these placeholder values to NA.
+
+**Effect**: The income columns now contain only valid income values, while missing values are clearly marked as `NA`.
+
+**Verification**: I used `summary()` and `is.na()` to confirm the placeholder values were replaced.
+
+```{r completeness}
+Df07_HW_clean <- Df07_HW_clean %>% mutate(income_clean = ifelse(TotalMonthlyHouseholdIncomeRaw >= 9999999, NA, TotalMonthlyHouseholdIncomeRaw))
+
+df09_HR_clean <- df09_HR_clean %>% mutate(income_clean = ifelse(TotalMonthlyHouseholdIncomeRaw >= 9999999, NA, TotalMonthlyHouseholdIncomeRaw), RequiedIncome_clean = ifelse(RequiredIncomeRaw >= 9999999, NA, RequiredIncomeRaw))
+
+#verification
+summary(Df07_HW$TotalMonthlyHouseholdIncomeRaw)
+summary(Df07_HW_clean$income_clean)
+sum(is.na(Df07_HW_clean$income_clean))
+```
+***
+
+##2.4 Range of values `MainToiletCode`
+**Problem**: Two records had a toilet code of `99`, which is not part of the valid range of toilet codes.
+
+**Treatment**: I changed the value `99` to `NA` because its meaning is unknown.
+
+**Effect**: The households stayed in the dataset, but the invalid toilet value was removed.
+
+**Verification**: I used `table()` before and after cleaning to show that `99` was replaced with `NA`.
+
+```{r}
+df05_BS_clean <- df05_BS_clean %>% mutate(MainToiletCode_clean = ifelse(MainToiletCode == 99, NA, MainToiletCode))
+
+#verification
+table(df05_BS_clean$MainToiletCode)
+table(df05_BS_clean$MainToiletCode_clean, useNA = "always")
+```
+***
+
+## 2.5 Data types
+**Problem**: The TotalVehicles column contained words like `"Unknown"` and `"not recorded"`, so R treated it as **text** instead of **numbers**.
+
+**Treatment**: converted the column to numeric, which automatically changed the text values into `NA`.
+
+**Effect**: The column can now be used in calculations because it is stored as numbers.
+
+**Verification**: I checked the data type with `class() `and counted the missing values using `is.na()`.
+
+```{r data types}
+table(df09_HR_clean$TotalVehicles)
+
+df09_HR_clean <- df09_HR_clean %>% mutate(TotalVehicles_clean = suppressWarnings(as.numeric(TotalVehicles)))
+
+#verification
+class(df09_HR_clean$TotalVehicles)
+class(df09_HR_clean$TotalVehicles_clean)
+sum(is.na(df09_HR_clean$TotalVehicles_clean))
+
+```
+***
+
+## 2.6 Inconsistencies
+**Problem**: Province names were written in different ways, such as different case letters and  spaces.
+
+**Treatment**: used a lookup table to change every variation into one of the nine official province names.
+
+**Effect**: The province names became consistent across the datasets.
+
+**Verification**: I counted the unique province names before and after cleaning to confirm they were reduced to nine.
+
+```{r inconsistencies}
+province_lookup <- c(
+  "western cape" = "Western Cape",   "eastern cape" = "Eastern Cape",
+  "northern cape" = "Northern Cape", "free state" = "Free State",
+  "kwazulu-natal" = "KwaZulu-Natal", "north west" = "North West",
+  "gauteng" = "Gauteng",             "mpumalanga" = "Mpumalanga",
+  "limpopo" = "Limpopo"
+)
+
+
+df05_BS_clean <- df05_BS_clean %>%
+  mutate(Province_clean = province_lookup[tolower(trimws(Province))])
+
+df06_HE_clean <- df06_HE %>%
+  mutate(Province_clean = province_lookup[tolower(trimws(Province))])
+
+
+
+# verification
+length(unique(df05_BS$Province))  
+length(unique(df05_BS_clean$Province_clean)) 
+table(df05_BS_clean$Province_clean)
+```
+***
+
+## 2.7 recoding categorical values
+**Problem**: The water and electricity columns used numbers (1, 2, 9), which are difficult to understand.
+
+**Treatment**: created new labelled columns that display meaningful text instead of only numbers.
+
+**Effect**: The data is easier to read while the original coded values are still available.
+
+**Verification** : I used `table()` to compare the original codes with the new labels.
+
+```{r recode-categoricals}
+df05_BS_clean <- df05_BS_clean %>%
+  mutate(WaterSafe_label = factor(WaterSafeCode,
+                                   levels = c(1, 2, 9),
+                                   labels = c("Considered safe", "Not considered safe", "Don't know")))
+
+df06_HE_clean <- df06_HE_clean %>%
+  mutate(ElectricityAccess_label = factor(ElectricityAccessCode,
+                                           levels = c(1, 2, 9),
+                                           labels = c("Has access", "No access", "Don't know")))
+
+# verification
+            
+table(df05_BS_clean$WaterSafeCode, df05_BS_clean$WaterSafe_label, useNA = "always")
+table(df06_HE_clean$ElectricityAccessCode, df06_HE_clean$ElectricityAccess_label, useNA = "always")
+
+```
+***
+
+##2.8 Outliers
+**Problem**: Some households had a size of 0, which is not possible for a household.
+
+**Treatment**: changed the value 0 to NA but kept larger household sizes because they are still possible.
+
+**Effect**: The minimum household size is now valid, while realistic large households remain in the data.
+
+**Verification**: I used summary() and is.na() to confirm the changes.
+
+```{r Outliers}
+table(Df07_HW_clean$HouseholdSize[Df07_HW_clean$HouseholdSize == 0 | Df07_HW_clean$HouseholdSize > 15])  
+
+Df07_HW_clean <- Df07_HW_clean %>%
+  mutate(HouseholdSize_clean = ifelse(HouseholdSize == 0, NA, HouseholdSize))
+
+# verification
+sum(is.na(Df07_HW_clean$HouseholdSize_clean))   
+summary(Df07_HW_clean$HouseholdSize_clean)      
+```
+
+## 2.9 D04 - Remove duplicated records
+**Problem**: D04 contains duplicate rows, which is the same issue as D07 and D09
+
+**Treatment**: Kept the first copy of each household.
+
+**Effect**: Duplicate rows removed, one record per household.
+
+**Verification**: Row counts before/after, plus a check for remaining duplicate IDs.
+
+```{r}
+nrow(df04_DC)
+df04_DC_clean <- df04_DC %>% distinct(HouseholdID, .keep_all = TRUE)
+nrow(df04_DC_clean)
+sum(duplicated(df04_DC_clean$HouseholdID))
+```
+
+## 2.10 D04 - Sentinel/unknown codes
+
+**Problem**: Several categorical fields use numbers to mean "unknown" or "other".
+
+**Treatment**: Recorded these sentinel values to NA, keeping the original column for traceability
+
+**Effect**: Sentinel codes no longer distort category counts.
+
+**Verification**: table() before/after
+```{r}
+df04_DC_clean <- df04_DC_clean %>%
+  mutate(
+    RoofMaterial_clean = ifelse(RoofMaterialCode == 99, NA, RoofMaterialCode),
+    RoofCondition_clean = ifelse(RoofConditionCode == 9, NA, RoofConditionCode),
+    FloorCondition_clean = ifelse(FloorConditionCode == 9, NA, FloorConditionCode),
+    TenureCode_clean = ifelse(TenureCode == 99, NA, TenureCode),
+    RDPHousing_clean = ifelse(RDPHousingCode == 9, NA, RDPHousingCode),
+    HousingSubsidy_clean = ifelse(HousingSubsidyCode %in% c(8,9),  NA, HousingSubsidyCode)
+  )
+
+table(df04_DC_clean$RoofMaterialCode, useNA = "always")
+table(df04_DC_clean$RoofMaterial_clean, useNA = "always")
+```
+
+## 2.11 D04 - RentRaw is misnamed
+**Problem**: RentRaw contains the values 1-9, 88 and 99, not continuous rand amounts.
+
+**Treatment**: Treat variable as categorical. Change recorded numbers(88/99) to NA
+
+**Effect**: Prevents RentRaw from being mistakenly averaged as currency.
+
+**Verification**: table() before/after
+
+```{r}
+df04_DC_clean <- df04_DC_clean %>%
+  mutate(RentBand_clean = ifelse(RentRaw %in% c(88, 99), NA, RentRaw))
+
+table(df04_DC_clean$RentRaw, useNA = "always")
+table(df04_DC_clean$RentBand_clean, useNA = "always")
+```
+
+## 2.12 D04 vs D07 - HouseholdSise cross-check
+```{r}
+size_check <- df04_DC_clean %>%
+  select(HouseholdID, size_d04 = HouseholdSize) %>%
+  inner_join(Df07_HW_clean %>% mutate(HouseholdID = as.character(HouseholdID)) %>% select(HouseholdID, size_d07 = HouseholdSize), by = "HouseholdID")
+sum(size_check$size_d04 != size_check$size_d07, na.rm = TRUE)
+```
+
+## 2.13 Province Inconsistensies in D04
+
+```{r}
+df04_DC_clean <- df04_DC_clean %>%
+  mutate(Province_clean = province_lookup[tolower(trimws(Province))])
+
+length(unique(df04_DC$Province))  
+length(unique(df04_DC_clean$Province_clean))
+
+```
+
+
+***
+#Task 3
+
+## 3.1 Which datasets can legitimately be joined
+Before joining the datasets, check that each household appeared only once in every table.
+
+```{r pre-join-cardinality}
+# each table MUST have zero duplicate HouseholdIDs before a 1:1 join is safe
+sum(duplicated(df04_DC_clean$HouseholdID))
+sum(duplicated(df05_BS_clean$HouseholdID))
+sum(duplicated(df06_HE_clean$HouseholdID))
+sum(duplicated(Df07_HW_clean$HouseholdID))
+sum(duplicated(df09_HR_clean$HouseholdID))
+```
+## 3.2 Row counts before and after each join
+The four datasets needed to be combined into one household-level dataset without losing  meaning or duplicating records.
+
+```{r join-step1}
+nrow(df05_BS_clean)
+nrow(df06_HE_clean)
+
+df06_HE_clean$HouseholdID <- format(df06_HE_clean$HouseholdID, scientific = FALSE, trim = TRUE)
+
+services <- inner_join(
+  df05_BS_clean %>% select(HouseholdID, Province_clean, GeoTypeCode, HouseholdWeight,
+                            WaterSafeCode, WaterSafe_label, MainToiletCode_clean),
+  df06_HE_clean %>% select(HouseholdID, ElectricityAccessCode, ElectricityAccess_label,
+                            LoadsheddingFrequencyCode),
+  by = "HouseholdID"
+)
+
+nrow(services)   
+```
+```{r join-step2}
+nrow(Df07_HW_clean); nrow(df09_HR_clean)
+
+wellbeing <- inner_join(
+  Df07_HW_clean %>% select(HouseholdID, HouseholdSize_clean, income_clean, AdultHungerCode),
+  df09_HR_clean %>% select(HouseholdID, MainIncomeSourceCode, TotalVehicles_clean,
+                            FridgeAssetCode, TVAssetCode, ComputerAssetCode,
+                            WashingMachineAssetCode, VehicleAssetCode, GeyserAssetCode,
+                            SolarPanelAssetCode),
+  by = "HouseholdID"
+)
+
+nrow(wellbeing)   # should be <= min(nrow(Df07_HW_clean), nrow(df09_HR_clean))
+```
+```{r join-step3}
+nrow(services); nrow(wellbeing)
+
+services$HouseholdID <- as.character(services$HouseholdID)
+wellbeing$HouseholdID <- as.character(wellbeing$HouseholdID)
+
+analytical_dataset <- inner_join(services, wellbeing, by = "HouseholdID")
+
+nrow(analytical_dataset)   
+# verify
+n_distinct(analytical_dataset$HouseholdID) == nrow(analytical_dataset)
+```
+**Verification of cardinality (no duplication introduced by the joins):**
+
+```{r verify-join}
+n_distinct(analytical_dataset$HouseholdID) == nrow(analytical_dataset)   # TRUE means still 1 row per household
+```
+## 3.2b Join D04 into analytical dataset
+```{r join-step4}
+nrow(analytical_dataset)
+nrow(df04_DC_clean)
+
+analytical_dataset <- inner_join(
+  analytical_dataset,
+  df04_DC_clean %>% select(HouseholdID, WallMaterialCode, WallConditionCode, RoofMaterial_clean, RoofCondition_clean, FloorCondition_clean, TenureCode_clean, RDPHousing_clean, HousingSubsidy_clean), by = "HouseholdID"
+)
+
+nrow(analytical_dataset)
+n_distinct(analytical_dataset$HouseholdID) == nrow(analytical_dataset)
+
+```
+
+
+
+
+## 3.3 Households dropped by the join
+Some households did not appear in every dataset, so they could not be included in the final joined dataset.
+
+```{r join-drops}
+dropped <- setdiff(union(df04_DC_clean$HouseholdID, union(df05_BS_clean$HouseholdID, df06_HE_clean$HouseholdID)) ,
+                    analytical_dataset$HouseholdID)
+length(dropped)   # how many service-side households didn't make it into the final table
+```
+
+## 3.4 Derived features
+The original data did not contain simple measures that could quickly compare households.The new variables created in this section make the dataset easier to analyse and compare. Each feature is built from existing cleaned data while keeping the original values unchanged.
+
+### 3.4.1 ServiceAccessScore -- composite basic-service access
+ater safety, electricity access and toilet validity are three
+separate binary/near-binary indicators. Comparing households on three
+columns at once is awkward for BI reporting or modelling; a single ordered
+score is easier to segment and visualise.
+
+```{r features}
+analytical_dataset <- analytical_dataset %>%
+  mutate(ServiceAccessScore = (WaterSafe_label == "Considered safe") +
+                               (ElectricityAccess_label == "Has access") +
+                               (!is.na(MainToiletCode_clean)))
+
+
+#verification
+table(analytical_dataset$ServiceAccessScore)
+table(analytical_dataset$ServiceAccessScore, analytical_dataset$ElectricityAccess_label)
+```
+### 3.4.2 AssetIndex 
+```{r assetIndex}
+analytical_dataset <- analytical_dataset %>%
+  mutate(AssetIndex = (FridgeAssetCode == 1) + (TVAssetCode == 1) + (ComputerAssetCode == 1) +
+                       (WashingMachineAssetCode == 1) + (VehicleAssetCode == 1) +
+                       (GeyserAssetCode == 1) + (SolarPanelAssetCode == 1))
+
+#verification
+summary(analytical_dataset$AssetIndex)
+table(analytical_dataset$AssetIndex)
+```
+### 3.4.3 LogIncome
+Milestone 1 found `Income_clean` heavily right-skewed evenafter removing placeholder values
+
+```{r logIncome}
+analytical_dataset <- analytical_dataset %>%
+  mutate(LogIncome = log1p(income_clean))
+
+#verification
+
+skew_check <- function(x) {
+  x <- x[!is.na(x)]
+  c(mean = mean(x), median = median(x), mean_minus_median = mean(x) - median(x))
+}
+
+skew_check(analytical_dataset$income_clean)   
+skew_check(analytical_dataset$LogIncome) 
+
+# Distribution after log transformation
+ggplot(analytical_dataset, aes(x = LogIncome)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 30,
+                 fill = "lightgreen",
+                 color = "black") +
+  geom_density(color = "blue", linewidth = 1) +
+  labs(
+    title = "Distribution of Log-Transformed Household Income",
+    x = "Log(Income + 1)",
+    y = "Density"
+  ) +
+  theme_minimal()
+ 
+```
+### 3.4.4 HouseholdSizeBand
+discretised household size.
+
+```{r sizeBand}
+analytical_dataset <- analytical_dataset %>%
+  mutate(HouseholdSizeBand = cut(HouseholdSize_clean,
+                                  breaks = c(0, 2, 5, Inf),
+                                  labels = c("Small (1-2)", "Medium (3-5)", "Large (6+)")))
+
+# verification
+table(analytical_dataset$HouseholdSizeBand, useNA = "always")
+sum(table(analytical_dataset$HouseholdSizeBand)) == sum(!is.na(analytical_dataset$HouseholdSize_clean))
+```
+### 3.4.5 Ordered recode of LoadsheddingFrequencyCode and AdultHungerCode
+```{r orderedRecode}
+analytical_dataset <- analytical_dataset %>%
+  mutate(
+    Loadshedding_ord = factor(ifelse(LoadsheddingFrequencyCode == 88, NA, LoadsheddingFrequencyCode),
+                               ordered = TRUE),
+    AdultHunger_ord  = factor(AdultHungerCode, ordered = TRUE)
+  )
+
+# verification
+class(analytical_dataset$LoadsheddingFrequencyCode)   
+class(analytical_dataset$Loadshedding_ord)             
+table(analytical_dataset$LoadsheddingFrequencyCode, analytical_dataset$Loadshedding_ord, useNA = "always")
+
+class(analytical_dataset$AdultHungerCode)
+class(analytical_dataset$AdultHunger_ord)
+```
+### 3.4.6 LowIncomeFlag
+```{r low-income}
+analytical_dataset <- analytical_dataset %>%
+  mutate(LowIncomeFlag = income_clean <= quantile(income_clean, 0.25, na.rm = TRUE))
+
+table(analytical_dataset$LowIncomeFlag, useNA = "always")
+summary(analytical_dataset$income_clean[analytical_dataset$LowIncomeFlag])
+```
+### 3.4.7 LowServiceLowIncome
+```{r feat-low-service-low-income}
+analytical_dataset <- analytical_dataset %>%
+  mutate(LowServiceLowIncome = ServiceAccessScore <= 1 & LowIncomeFlag)
+
+  table(analytical_dataset$LowServiceLowIncome, useNA = "always")
+
+all(analytical_dataset$LowIncomeFlag[analytical_dataset$LowServiceLowIncome] == TRUE)
+```
+
+## 3.4.7 DwellingConditionsScore
+```{r}
+analytical_dataset <- analytical_dataset %>%
+  mutate(DwellingConditionsScore = (WallConditionCode == 1)+
+           (RoofCondition_clean == 1) +
+           (FloorCondition_clean == 1))
+table(analytical_dataset$DwellingConditionsScore, useNA = "always")
+```
+
+
+***
+
+## 3.5 Data dictionary
+
+```{r data-dictionary}
+data_dict <- tribble(
+  ~Variable,               ~Source,        ~Type,      ~Description,
+  "RoofMaterial_clean", "df04_DC", "integer", "RoofMaterialCode with sentinel 99 set to NA",
+  "TenureCode_clean", "df04_DC", "integer", "TenureCode with sentinel 99 set to NA",
+  "RDPHousing_clean", "df04_DC", "integer", "RDPHousingCode with sentinel 9 set to NA",
+  "HousingSubsidy_clean", "df04_DC", "integer", "HousingSubsidyCode with sentinels 8/9 set to NA",
+  "DwellingCoditionsScore", "Engineered", "integer", "0-3 composite: wall + roof + floor conditions", 
+  "HouseholdID",           "All 4 files",  "character","Household identifier; join key",
+  "Province_clean",        "df05_BS",      "character","Standardised province name (9 categories)",
+  "GeoTypeCode",           "df05_BS",      "integer",  "Urban/rural/informal classification, as supplied",
+  "HouseholdWeight",       "df05_BS",      "numeric",  "Survey weight, as supplied",
+  "WaterSafe_label",       "df05_BS",      "factor",   "Recoded from WaterSafeCode ",
+  "MainToiletCode_clean",  "df05_BS",      "integer",  "MainToiletCode with invalid 99 set to NA ",
+  "ElectricityAccess_label","df06_HE",     "factor",   "Recoded from ElectricityAccessCode ",
+  "LoadsheddingFrequencyCode","df06_HE",   "integer",  "As supplied",
+  "HouseholdSize_clean",   "Df07_HW",      "integer",  "HouseholdSize with 0 set to NA ",
+  "Income_clean",          "Df07_HW",      "numeric",  "TotalMonthlyHouseholdIncomeRaw with >=9,999,999 set to NA",
+  "AdultHungerCode",       "Df07_HW",      "integer",  "As supplied",
+  "MainIncomeSourceCode",  "df09_HR",      "integer",  "As supplied",
+  "TotalVehicles_clean",   "df09_HR",      "numeric",  "TotalVehicles converted to numeric",
+  "ServiceAccessScore",    "Engineered",   "integer",  "0-3 composite: water safety + electricity access + valid toilet code ",
+  "AssetIndex",            "Engineered",   "integer",  "0-7 count of owned assets ",
+  "LowIncomeFlag",         "Engineered",   "logical",  "Bottom quartile of Income_clean; analytic split, not an official poverty line "
+)
+
+kable(data_dict, caption = "Data dictionary for the Milestone 2 analytical dataset")
+```
+
+## 3.6 New analytical dataset
+I exported the final analytical dataset as a CSV file for ` Milestone 3`.
+
+```{r export}
+
+write.csv(analytical_dataset, "analytical_dataset.csv", row.names = FALSE)
+nrow(analytical_dataset)
+ncol(analytical_dataset)
+summary(analytical_dataset)
+head(analytical_dataset)
+
+```
+
+
+4. PREPARE FOR MODELLING
+
+This section continues directly from Section 3.6. We load the exported "analytical_dataset.csv" (one row per household) and prepare it for modelling: defining the target, removing identifiers/leakage variables, encoding, checking class imbalance and designing a leakage-safe train/test split.
+
+For each decision we follow the same structure used above:
+Problem -> Treatment ->  Effect -> Verification.
+
+```{r task4-setup}
+library(tidyverse)
+library(janitor)
+library(knitr)
+library(scales)
+#install.packages("rsample")
+library(rsample) #train/test splitting
+
+analytical_dataset <- read.csv("analytical_dataset.csv")
+nrow(analytical_dataset)
+ncol(analytical_dataset)
+
+```
+##4.1 DEFINE THE MODELING TARGET
+
+DECISION: Milestone 1s business question asks "which basic services
+are most strongly associated with household poverty". To answer this as a modelling question, poverty must be the TARGET and the basic service variables must remain free to act as predicators.
+
+"LowIncomeFlag" (lower quartile of "income_clean") is used as the target. "LowServiceLowIncome" is not used as the target because it is built partially  from "ServiceAccessScore", which is itself built from the same water/electricity/toilet variables we want to test as predictors  (using it
+as a target would make the "prediction" circular).
+
+PROBLEM: No variable was yet formally designated as the modelling target. Several engineered candidates existed 
+
+TREATMENT: "LowIncomeFlag" (TRUE = household income in the lower quartile) is selected as a binary classification target.
+
+EFFECT: The dataset now has one  target column, "Target"
+and all other income derived and service composite columns can be correctly classified as either "keep as predictor" or "remove for leakage" in section 4.2.
+
+VERIFICATION:
+
+```{r task4-target}
+analytical_dataset <- analytical_dataset %>% rename(Target = LowIncomeFlag) %>% mutate(Target = factor(Target, levels = c(FALSE, TRUE),labels = c("NotLow", "Low")))
+
+table(analytical_dataset$Target, useNA = "always")
+
+```
+##4.2 REMOVE MISSING TARGET VALUES
+
+##PROBLEM:"Target" has missing values wherever "income_clean" was missing (450 households) since the flag cannot be computed for those rows.
+
+##TREATMENT: Rows with a missing "Target" are removed. They cannot be used for supervised training or evaluation regardless of whats done to the predictors.
+
+##EFFECT: The modelling dataset shrinks slightly but every remaining row has a usable label.
+
+VERIFICATION:
+
+```{r task4-drop-na-target}
+n_before <- nrow(analytical_dataset)
+
+model_data <- analytical_dataset %>%
+  filter(!is.na(Target))
+
+n_after <- nrow(model_data)
+n_before
+n_after
+n_before - n_after          
+sum(is.na(model_data$Target))
+```
+
+##4.3 IDENTIFY AND REMOVE IDENTIFYERS, LEAKAGE VARIABLES AND UNSUITABLE PREDICATORS. 
+PROBLEM:  The dataset contains identifier columns, a survey weight, and  columns that are mathematically derived from the target itself. Leaving these in would let the model "cheat" rather than learn a real relationship.
+
+TREATMENT: The following columns are removed before modelling:
+
+HouseholdID - Identifier, not a predictor 
+HouseholdWeight - Survey weight, not a predictor for this classification task 
+Income_clean - Used to construct "TargeT" directly — leakage LogIncome - Log of "income_clean" — same leakage 
+LowServiceLowIncome - Combines "Target" with "ServiceAccessScore" — leakage 
+
+"ServiceAccessScore", "WaterSafe_label", "ElectricityAccess_label" and
+"MainToiletCode_clean" are kept  as they are the basic-service variables the business question is actually about and they do not mathematically define "Target" (only income does).
+
+EFFECT: The predictor set now contains only variables that are plausibly available independently of the target and that are relevant to the business question.
+
+VERIFICATION:
+
+```{r task4-drop-leakage}
+leakage_cols <- c("HouseholdID", "HouseholdWeight", "income_clean", "LogIncome", "LowServiceLowIncome")
+
+model_data <- model_data %>%
+select(-all_of(leakage_cols))
+
+ncol(model_data)
+names(model_data)
+```
+
+##4.4 ENCODING CATEGORIAL PREDICATORS 
+
+##PROBLEM: Several predictors are character or ordinal-coded strings and R needs them stored as factors for both tree-based models (random forest / decision tree) and linear models (logistic regression) to treat them correctly.
+
+##TREATMENT: Character columns are converted to unordered factors. The two variables that are  ordinal ("Loadshedding_ord" and "AdultHunger_ord") are kept as ordered factors rather than one-hot dummies since ordering carries real information (more/less frequent load-shedding, more/less hunger).
+
+##No manual one-hot dummy encoding is applied at this stage: "glm()" and tree-based models in R handle factors via the model formula. (If a "glmnet"-style regularised model is used later, "model.matrix()" can dummy-encode from these factors at that point. Encoding is only applied where the chosen technique actually requires it.)
+
+##EFFECT: All categorical predictors are now factors with an  explicit set of levels which also makes missingness in categorical variables visible as "NA" rather than the string " "NA" ".
+
+VERIFICATION:
+
+```{r task4-encode}
+model_data <- model_data %>% mutate(across(where(is.character), as.factor)) %>% mutate(
+Loadshedding_ord = factor(Loadshedding_ord, ordered = TRUE),
+AdultHunger_ord  = factor(AdultHunger_ord, ordered = TRUE))
+
+sapply(model_data, class)
+```
+
+##4.5 ASSESS CLASS IMBALANCE 
+
+PROBLEM: Bottom-quartile flags are, by construction, imbalanced (25% "Low" vs 75% "NotLow"). If its left unaddressed, this can bias a classifier toward always predicting the majority class.
+
+TREATMENT: The class balance is measured before splitting so
+the decision on whether to stratify or resample iS evidence-based and not assumed.
+EFFECT: No rows are changed at this stage. This step is diagnostic and informs the split design in Section 4.6.
+
+VERIFICATION:
+
+```{r task4-imbalance}
+model_data %>%
+count(Target) %>%
+mutate(Pct = round(100 * n / sum(n), 1)) %>%
+kable(caption = "Class balance of the modelling target")
+
+```
+
+Given the 25/75 split is a designed quartile cut rather than an extreme imbalance, for example 95/5, stratified sampling in the train/test split (section 4.6) is sufficient. No SMOTE-style resampling is applied, since that would risk fabricating synthetic low-income households for a socioeconomic report where every observation should be traceable to a real household.
+
+
+##4.6 TRAIN/TEST SPLIT (leakage-safe design)
+
+PROBLEM: A split must preserve the class balance found in 4.5 in both parts and no information from the test set may influence any step performed on the training set.
+
+TREATMENT: A stratified 80/20 split is used, stratified on
+"Target". The split is performed first and any future imputation, scaling or encoding fitted from data statistics such as mean imputation must be fit on "train_data" only and then applied unchanged to "test_data" , this is the mechanism that prevents preprocessing
+leakage.
+
+EFFECT:  Two disjoint datasets are produced with approximately the same class proportions as the full dataset.
+
+VERIFICATON:
+
+```{r task4-split}
+set.seed(381)   
+
+split <- initial_split(model_data, prop = 0.8, strata = Target)
+train_data <- training(split)
+test_data  <- testing(split)
+
+nrow(train_data)
+nrow(test_data)
+
+#class balance is preserved in both partitions
+prop.table(table(train_data$Target))
+prop.table(table(test_data$Target))
+
+#no household appears in both sets
+intersect(rownames(train_data), rownames(test_data))
+```
+##4.7 BEFORE/AFTER VALIDATION SUMARY 
+
+##PROBLEM: The rubric requires explicit before/after evidence for major preprocessing decisions, not just narrative description.
+
+##TREATMENT: Row counts, variable counts, missingness and target balance are compared before Section 4 (raw "analytical_dataset") and after (final "train_data` / `test_data").
+
+VERIFICATION:
+
+```{r task4-summary}
+validation_summary <- tibble(Stage = c("Original analytical_dataset", "After target NA removal",
+"After leakage-column removal", "Train split", "Test split"),
+Rows= c(nrow(analytical_dataset), n_after, nrow(model_data), nrow(train_data), nrow(test_data)), 
+Columns= c(ncol(analytical_dataset), ncol(analytical_dataset) - 0,
+ncol(model_data), ncol(train_data), ncol(test_data)),
+Missing_Target = c(sum(is.na(analytical_dataset$LowIncomeFlag)), 0, 0, 0, 0)
+)
+
+kable(validation_summary, caption = "Before/after summary for Task 4 preprocessing")
+```
+
+##4.8 EXPORT MODELLING-READY DATASETSS 
+
+```{r task4-export}
+write.csv(train_data, "train_data.csv", row.names = FALSE)
+write.csv(test_data, "test_data.csv", row.names = FALSE)
+
+nrow(train_data); ncol(train_data)
+nrow(test_data);  ncol(test_data)
+
+```

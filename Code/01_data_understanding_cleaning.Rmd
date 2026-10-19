@@ -1,0 +1,481 @@
+---
+title: "Milestone 1"
+output: word_document
+date: "2026-09-09"
+Authour: "BIN 381 - Group P3"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))   
+```
+
+```{r install-packages, eval=FALSE}
+install.packages(c("tidyverse", "janitor", "skimr", "naniar", "knitr", "scales"))
+```
+```{r libraries}
+library(tidyverse)
+library(janitor)
+library(skimr)
+library(naniar)
+library(knitr)
+library(scales)
+```
+# Introduction
+
+In South Africa, many households lack reliable access to electricity, clean drinking water and adequate sanitation. Government departments need evidence showing which service gaps are most closely linked to poverty limited infrastructure budgets can be allocated effectively.
+
+## Decision problem
+Which basic services(electricity, water and sanitation) are most strongly associated with household poverty, and which should be prioritised for intervention?
+
+###stakeholders
+- Government
+- Municipalities
+- NGOs
+
+### needs and objectives
+Stakeholders need evidence evaluating which service gaps has the strongest relationship withi household income and wellbeing.
+
+objectives:
+- Identify the relationship between basic services and poverty.
+- Produce evidence that supports Infrastructure investment decisions.
+
+## Success Critria
+- Identify meaningful relationships
+- Use Exploratory Data Analysis (EDA)
+- Present results to a range of audiences
+
+###task
+- explore the household survey data
+- Compare income, electricity and water and sanitation attributes
+- Produce Data findings in the form of data visualisations
+
+### Risks and Assumptions
+- Missing values
+- Duplicated records
+- Placeholder codes
+
+
+#Load the datasets
+
+```{r load}
+df05_BS <- read.csv("../Data/D05_Basic_Services.csv")
+df06_HE <- read.csv("../Data/D06_Household_Energy.csv")
+Df07_HW <- read.csv("../Data/D07_Household_Wellbeing.csv")
+df09_HR <- read.csv("../Data/D09_Household_Resources.csv")
+```
+
+## Dataset Portfolio
+
+
+#1. Data inspection
+
+## 1.1 Basic Services (df05_BS)
+
+```{r inspect-df05_BS}
+head(df05_BS)
+dim(df05_BS)
+str(df05_BS)
+summary(df05_BS)
+names(df05_BS)
+sapply(df05_BS,class)
+```
+
+## 1.2 Household Energy (df06_HE)
+
+```{r inspect-df06_HE}
+head(df06_HE)
+dim(df06_HE)
+str(df06_HE)
+summary(df06_HE)
+names(df06_HE)
+```
+
+## 1.3 Household Wellbeing (Df07_HW)
+
+```{r inspect-Df07_HW}
+head(Df07_HW)
+dim(Df07_HW)
+str(Df07_HW)
+summary(Df07_HW)
+names(Df07_HW)
+```
+
+## 1.4 Household Resources (df09_HR)
+
+```{r inspect-df09_HR}
+head(df09_HR)
+dim(df09_HR)
+str(df09_HR)
+summary(df09_HR)
+names(df09_HR)
+```
+
+## 1.5 Dataset Portfolio Overview
+
+```{r overview}
+portfolio <- tibble(
+  Dataset             = c("df05_BS", "df06_HE", "Df07_HW", "df09_HR"),
+  Name                = c("Basic Services", "Household Energy",
+                           "Household Wellbeing", "Household Resources"),
+  Unit_of_observation = rep("Household", 4),
+  Rows                = c(nrow(df05_BS), nrow(df06_HE), nrow(Df07_HW), nrow(df09_HR)),
+  Columns             = c(ncol(df05_BS), ncol(df06_HE), ncol(Df07_HW), ncol(df09_HR)),
+  Main_purpose = c(
+    "Drinking water source/safety and toilet/sanitation access",
+    "Electricity access, main energy source, load-shedding exposure",
+    "Food-security indicators and total household income",
+    "Income sources, required income and household asset ownership"
+  )
+)
+
+kable(portfolio, caption = "Overview of the four candidate datasets carried into Milestone 1 Data Understanding")
+```
+## 1.6 Keys and Relationships
+
+`HouseholdID` is the identifier by all four datasets.
+Beware of data overlap though relationship types between the different data sources.
+
+```{r key-summary}
+key_summary <- tibble(
+  Dataset                    = c("df05_BS", "df06_HE", "Df07_HW", "df09_HR"),
+  Rows                       = c(nrow(df05_BS), nrow(df06_HE), nrow(Df07_HW), nrow(df09_HR)),
+  Unique_HouseholdID         = c(n_distinct(df05_BS$HouseholdID), n_distinct(df06_HE$HouseholdID),
+                                  n_distinct(Df07_HW$HouseholdID), n_distinct(df09_HR$HouseholdID)),
+  Duplicate_HouseholdID_rows = Rows - Unique_HouseholdID
+)
+
+kable(key_summary, caption = "HouseholdID row counts vs. distinct HouseholdID values, by dataset")
+```
+
+## Summary Statistics
+
+```{r summary}
+summary(Df07_HW$TotalMonthlyHouseholdIncomeRaw)
+summary(Df07_HW$HouseholdSize)
+```
+
+#2. Data Quality Assessment
+
+## 2.1 Completeness
+
+```{r missing}
+# missing values
+sum(is.na(df05_BS))
+colSums(is.na(df05_BS))
+
+sum(is.na(df06_HE))
+colSums(is.na(df06_HE))
+
+sum(is.na(Df07_HW))
+colSums(is.na(Df07_HW))
+
+sum(is.na(df09_HR))
+colSums(is.na(df09_HR))
+```
+```{r missing-plot}
+# combine the non-zero missing counts into one plot
+missing_summary <- function(df, name) {
+  df %>%
+    summarise(across(everything(), ~ sum(is.na(.)))) %>%
+    pivot_longer(everything(), names_to = "Variable", values_to = "Missing") %>%
+    filter(Missing > 0) %>%
+    mutate(Dataset = name) %>%
+    relocate(Dataset)
+}
+
+missingness <- bind_rows(
+  missing_summary(df05_BS, "df05_BS"), missing_summary(df06_HE, "df06_HE"),
+  missing_summary(Df07_HW, "Df07_HW"), missing_summary(df09_HR, "df09_HR")
+)
+
+kable(missingness, caption = "Variables with explicit missing (NA) values")
+
+ggplot(missingness, aes(x = reorder(paste(Dataset, Variable), Missing), y = Missing, fill = Dataset)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Explicit missing values (NA) by variable", x = NULL, y = "Missing records") +
+  theme_minimal()
+```
+
+## 2.2 uniqueness
+
+```{r dupes}
+#Duplicate Records
+
+dupe_summary <- tibble(
+  Dataset = c("df05_BS", "df06_HE", "Df07_HW","df09_HR"),
+  Full_row_duplicates = c(sum(duplicated(df05_BS)), sum(duplicated(df06_HE)),
+                           sum(duplicated(Df07_HW)), sum(duplicated(df09_HR)))
+)
+dupe_summary
+```
+
+## 2.3 Validity
+
+```{r validity-sanitation}
+df05_BS %>%
+  count(MainToiletCode) %>%
+  arrange(desc(MainToiletCode)) %>%
+  kable(caption = "MainToiletCode frequencies -- 99 falls outside the observed 1-12 range")
+```
+
+```{r validity-vehicles}
+df09_HR %>%
+  count(TotalVehicles) %>%
+  arrange(desc(n)) %>%
+  kable(caption = "TotalVehicles raw values")
+```
+
+```{r validity-income}
+bind_rows(
+  Df07_HW %>% transmute(Dataset = "Df07_HW", Variable = "TotalMonthlyHouseholdIncomeRaw", Value = TotalMonthlyHouseholdIncomeRaw),
+  df09_HR %>% transmute(Dataset = "df09_HR", Variable = "TotalMonthlyHouseholdIncomeRaw", Value = TotalMonthlyHouseholdIncomeRaw),
+  df09_HR %>% transmute(Dataset = "df09_HR", Variable = "RequiredIncomeRaw", Value = RequiredIncomeRaw)
+) %>%
+  filter(Value >= 9999999) %>%
+  count(Dataset, Variable, Value) %>%
+  kable(caption = "Implausible / placeholder income values (>= 9,999,999)")
+```
+
+## 2.4 Consistency
+
+```{r consistency-province-raw}
+#raw tables
+table(df05_BS$Province)
+table(df06_HE$Province)
+```
+```{r consistency-province-fix}
+# Formatted data
+bind_rows(
+  df05_BS %>% count(Province) %>% mutate(Dataset = "df05_BS"),
+  df06_HE %>% count(Province) %>% mutate(Dataset = "df06_HE")
+) %>%
+  arrange(Dataset, Province) %>%
+  relocate(Dataset) %>%
+  kable(caption = "Raw Province values in df05_BS and df06_HE (26 distinct strings for 9 real provinces)")
+```
+
+## 2.5 Data Types
+```{r data-types}
+type_table <- function(df, name) {
+  tibble(Dataset = name, Variable = names(df), Type = map_chr(df, ~ class(.)[1]))
+}
+
+bind_rows(
+  type_table(df05_BS, "df05_BS"), type_table(df06_HE, "df06_HE"),
+  type_table(Df07_HW, "Df07_HW"), type_table(df09_HR, "df09_HR")
+) %>%
+  count(Dataset, Type) %>%
+  pivot_wider(names_from = Type, values_from = n, values_fill = 0) %>%
+  kable(caption = "Count of variables by R data type, per dataset")
+```
+
+## 2.6 Distributions and Unusual Observations
+
+```{r distributions-income-stats}
+Df07_HW %>%
+  mutate(Income_clean = ifelse(TotalMonthlyHouseholdIncomeRaw >= 9999999, NA, TotalMonthlyHouseholdIncomeRaw)) %>%
+  summarise(
+    Min    = min(Income_clean, na.rm = TRUE),
+    Median = median(Income_clean, na.rm = TRUE),
+    Mean   = round(mean(Income_clean, na.rm = TRUE), 0),
+    Max    = max(Income_clean, na.rm = TRUE),
+    SD     = round(sd(Income_clean, na.rm = TRUE), 0),
+    N_flagged_as_placeholder = sum(is.na(Income_clean) & !is.na(TotalMonthlyHouseholdIncomeRaw))
+  ) %>%
+  kable(caption = "Household monthly income (Rand) after placeholder removal")
+
+income_clean <- Df07_HW %>% mutate(Income_clean = ifelse(TotalMonthlyHouseholdIncomeRaw >= 9999999, NA, TotalMonthlyHouseholdIncomeRaw))
+boxplot(income_clean$Income_clean,horizontal = TRUE )
+```
+
+```{r distributions-income-plot}
+Df07_HW %>%
+  mutate(Income_clean = ifelse(TotalMonthlyHouseholdIncomeRaw >= 9999999, NA, TotalMonthlyHouseholdIncomeRaw)) %>%
+  filter(!is.na(Income_clean)) %>%
+  ggplot(aes(x = Income_clean)) +
+  geom_histogram(bins = 50, fill = "#2c7fb8") +
+  scale_x_continuous(labels = comma, trans = "log1p",
+                      breaks = c(0, 1000, 5000, 20000, 100000)) +
+  labs(title = "Distribution of household monthly income (log scale)",
+       x = "Monthly income (R)", y = "Households") +
+  theme_minimal()
+```
+Income is heavily right-skewed
+
+```{r distributions-householdsize}
+Df07_HW %>%
+  ggplot(aes(x = HouseholdSize)) +
+  geom_histogram(binwidth = 1, fill = "#41ab5d") +
+  labs(title = "Distribution of household size", x = "Household size", y = "Households") +
+  theme_minimal()
+```
+
+
+#3. Exploratory Data Analysis
+
+The EDA of whether access to basic services appears related to household poverty.
+
+### df05_BS - Basic Services
+
+```{r water}
+barplot(table(df05_BS$WaterSafeCode), main="Water Safety",ylab = "amount",xlab = "water Safty code")
+df05_BS %>%
+  count(WaterSafeCode) %>%
+  mutate(Pct = round(100 * n / sum(n), 1)) %>%
+  kable(caption = "WaterSafeCode frequency (assumed 1 = considered safe, 2 = not safe, 9 = don't know)")
+```
+```{r eda-df05_BS-water-province}
+df05_BS %>%
+  filter(WaterSafeCode %in% c(1, 2)) %>%
+  mutate(WaterSafeCode = factor(WaterSafeCode, labels = c("Considered safe", "Not considered safe"))) %>%
+  count(Province, WaterSafeCode) %>%
+  group_by(Province) %>%
+  mutate(Pct = n / sum(n)) %>%
+  ungroup() %>%
+  ggplot(aes(x = reorder(Province, Pct * (WaterSafeCode == "Not considered safe")), y = Pct, fill = WaterSafeCode)) +
+  geom_col(position = "fill") +
+  coord_flip() +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Perceived drinking water safety by province", x = NULL, y = "Share of households", fill = NULL) +
+  theme_minimal()
+```
+
+```{r sanitation}
+barplot(table(df05_BS$MainToiletCode), main="Main Toilet Type", xlab = "toilet code", ylab = "Households")
+df05_BS %>%
+  filter(MainToiletCode != 99) %>%
+  count(MainToiletCode) %>%
+  ggplot(aes(x = reorder(factor(MainToiletCode), n), y = n)) +
+  geom_col(fill = "#756bb1") +
+  coord_flip() +
+  labs(title = "MainToiletCode frequency excluding outliers", x = "Toilet code", y = "Households") +
+  theme_minimal()
+```
+
+### df06_HE - Household Energy
+
+```{r electricity}
+barplot(table(df06_HE$ElectricityAccessCode), main="Electricity Access", xlab = "electricity access code", ylab = "fequency")
+df06_HE %>%
+  count(ElectricityAccessCode) %>%
+  mutate(Pct = round(100 * n / sum(n), 1)) %>%
+  kable(caption = "ElectricityAccessCode frequency (assumed 1 = has access, 2 = no access, 9 = don't know)")
+```
+
+```{r loadshed}
+barplot(table(df06_HE$LoadsheddingFrequencyCode), main="Loadshedding Frequency", xlab =" Loadshedding Frequency Codes", ylab = "Households")
+df06_HE %>%
+  filter(LoadsheddingFrequencyCode != 88) %>%
+  count(LoadsheddingFrequencyCode) %>%
+  ggplot(aes(x = factor(LoadsheddingFrequencyCode), y = n)) +
+  geom_col(fill = "#e6550d") +
+  labs(title = "Load-shedding frequency among relevant grid-connected households",
+       x = "LoadsheddingFrequencyCode", y = "Households") +
+  theme_minimal()
+```
+
+```{r eda-df06_HE-electricity-province}
+df06_HE %>%
+  filter(ElectricityAccessCode %in% c(1, 2)) %>%
+  mutate(ElectricityAccessCode = factor(ElectricityAccessCode, labels = c("Has access", "No access"))) %>%
+  count(Province, ElectricityAccessCode) %>%
+  group_by(Province) %>%
+  mutate(Pct = n / sum(n)) %>%
+  ungroup() %>%
+  filter(ElectricityAccessCode == "No access") %>%
+  ggplot(aes(x = reorder(Province, Pct), y = Pct)) +
+  geom_col(fill = "#de2d26") +
+  coord_flip() +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Share of households without electricity access, by province", x = NULL, y = "Share without access") +
+  theme_minimal()
+```
+
+
+### Df07_HW - Household Wellbeing
+
+```{r income-province}
+summary(Df07_HW$TotalMonthlyHouseholdIncomeRaw)
+Df07_HW %>%
+  mutate(Income_clean = ifelse(TotalMonthlyHouseholdIncomeRaw >= 9999999, NA, TotalMonthlyHouseholdIncomeRaw)) %>%
+  filter(!is.na(Income_clean)) %>%
+  ggplot(aes(x = reorder(Province, Income_clean, FUN = median), y = Income_clean)) +
+  geom_boxplot(fill = "#3182bd", outlier.alpha = 0.2) +
+  coord_flip() +
+  scale_y_continuous(labels = comma, trans = "log1p", breaks = c(0, 1000, 5000, 20000, 100000)) +
+  labs(title = "Household monthly income by province (log scaled)", x = NULL, y = "Monthly income (R)") +
+  theme_minimal()
+```
+
+
+```{r hunger}
+table(Df07_HW$AdultHungerCode)
+barplot(table(Df07_HW$AdultHungerCode), main="Adult Hunger", ylab = "Households", xlab = "adult hunger code")
+Df07_HW %>%
+  filter(!is.na(AdultHungerCode), AdultHungerCode %in% 1:6) %>%
+  count(AdultHungerCode) %>%
+  ggplot(aes(x = factor(AdultHungerCode), y = n)) +
+  geom_col(fill = "#31a354") +
+  labs(title = "AdultHungerCode frequency", x = "Adult Hunger Code", y = "Households") +
+  theme_minimal()
+```
+
+### df09_HR - Household Resources
+
+```{r assets}
+table(Df07_HW$AdultHungerCode)
+barplot(table(df09_HR$FridgeAssetCode), main="Fridge Ownership")
+barplot(table(df09_HR$TVAssetCode), main="TV Ownership")
+barplot(table(df09_HR$VehicleAssetCode), main="Vehicle Ownership")
+asset_cols <- c(Fridge = "FridgeAssetCode", TV = "TVAssetCode", Computer = "ComputerAssetCode",
+                 WashingMachine = "WashingMachineAssetCode", Vehicle = "VehicleAssetCode",
+                 Geyser = "GeyserAssetCode", SolarPanel = "SolarPanelAssetCode")
+
+asset_ownership <- map_dfr(names(asset_cols), function(nm) {
+  col <- asset_cols[[nm]]
+  df09_HR %>%
+    filter(.data[[col]] %in% c(1, 2)) %>%
+    summarise(Asset = nm, Pct_owning = mean(.data[[col]] == 1))
+})
+
+asset_ownership %>%
+  ggplot(aes(x = reorder(Asset, Pct_owning), y = Pct_owning)) +
+  geom_col(fill = "#08519c") +
+  coord_flip() +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Household asset ownership rates (assumed 1 = owns, 2 = does not own)", x = NULL, y = "Share of households") +
+  theme_minimal()
+```
+
+```{r income-source}
+barplot(table(df09_HR$MainIncomeSourceCode), main="Main Income Source", ylab = "Household freq", xlab = "income code")
+
+asset_cols <- c("FridgeAssetCode", "TVAssetCode", "ComputerAssetCode",
+                 "WashingMachineAssetCode", "VehicleAssetCode",
+                 "GeyserAssetCode", "SolarPanelAssetCode")
+
+pct_owning <- sapply(df09_HR[asset_cols], function(x) mean(x == 1, na.rm = TRUE))
+names(pct_owning) <- c("Fridge", "TV", "Computer",
+                 "WashingMachine", "Vehicle",
+                 "Geyser", "SolarPanel")
+barplot(pct_owning, horiz = TRUE, las = 1,
+        main = "Household asset ownership rate", xlab = "Share of households")
+
+df09_HR %>%
+  count(MainIncomeSourceCode) %>%
+  filter(!is.na(MainIncomeSourceCode)) %>%
+  arrange(desc(n)) %>%
+  kable(caption = "MainIncomeSourceCode frequency")
+```
+
+## Initial Hypotheses
+
+1. Households without electricity access are more likely to have lower incomes.
+2. Unsafe water access is associated with poorer household wellbeing.
+3. Households with fewer assets tend to report lower income.
+4. Food insecurity appears more common among lower-income households.
