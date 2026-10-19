@@ -142,4 +142,4 @@ Review it at least once every quarter. Recalculate the numbers below on any new 
 
 - The data describes the income and living conditions of households. No household is identified anywhere in the outputs.
 - The results are patterns in survey data and should never be used on their own to decide whether a household receives help. A "NotLow" prediction is not a reason to refuse support.
-- AI tools were used during the project, for example to help write and test R code, structure notebooks and draft report text. All AI use is recorded in the responsible AI usage log, and all code was run and checked by the team.
+- AI tools were used during the project, for example to guide visualisation for easier readability and problem/error correction.
