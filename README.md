@@ -143,3 +143,49 @@ Review it at least once every quarter. Recalculate the numbers below on any new 
 - The data describes the income and living conditions of households. No household is identified anywhere in the outputs.
 - The results are patterns in survey data and should never be used on their own to decide whether a household receives help. A "NotLow" prediction is not a reason to refuse support.
 - AI tools were used during the project, for example to guide visualisation for easier readability and problem/error correction.
+
+## Repo Structure
+```
+Milestone-4/
+│
+├── 📁 app/
+│   ├── app.R
+│   ├── train_data.csv
+│   └── test_data.csv
+│
+├── 📁 Code/
+│   ├── 01_data_understanding_cleaning.Rmd
+│   ├── 02_prepare_and_split.Rmd
+│   ├── 03_modelling_evaluation.Rmd
+│   ├── analytical_dataset.csv
+│   ├── train_data.csv
+│   └── test_data.csv
+│
+├── 📁 Data/
+│   ├── D04_Dwelling_Conditions.csv
+│   ├── D05_Basic_Services.csv
+│   ├── D06_Household_Energy.csv
+│   ├── D07_Household_Wellbeing.csv
+│   └── D09_Household_Resources.csv
+│
+├── 📁 Dashboard/
+│   └── SDHSA dashboard.pbix/
+│
+├── 📁 Documents/
+│   ├── BIN project report.pdf
+│   ├── data dictionary.pdf
+│   ├── Ethic and Responsible AI use.docx
+│   └── SDHSA_Milestone4_Executive_Presentation.pptx
+│
+├── 📁 .RProj.user/
+├── 📄 analytical_dataset.csv
+├── 📄 .RData
+├── 📄 .RHistory
+├── 📄 model_glmnet.rds
+├── 📄 model_glmnet_reg.rds
+├── 📄 model_rf.rds
+├── 📄 model_rf_reg.rds
+├── 📄 model_tree.rds
+├── 📄 ModelingAndDeployment.Rproj
+└── 📄 README.md
+```
